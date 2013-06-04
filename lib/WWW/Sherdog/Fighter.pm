@@ -13,7 +13,7 @@ our $VERSION = '0.01';
 __PACKAGE__->_delayed_accessors(qw(
     id name nickname link path association
     weight weight_kg height height_cm class
-    wins losses wins_breakdown losses_breakdown history
+    wins losses draws no_contests wins_breakdown losses_breakdown history
     birthday birthplace nationality
 ));
 
@@ -33,6 +33,11 @@ sub crawl_fighter {
         'Fight History'   => 'professional',
         'Amateur Fights'  => 'amateur',
         'Upcoming Fights' => 'upcoming_fight',
+    );
+
+    my %result_other_types = (
+        'Draws' => 'draws',
+        'N/C'   => 'no_contests',
     );
 
     my $fighter = scraper {
@@ -68,8 +73,23 @@ sub crawl_fighter {
             losses => 'TEXT';
         process 'div.left_side > div.loser > span.graph_tag',
             'losses_breakdown[]' => 'TEXT';
-        process 'div.right_side > div.bio_graph > span.card > span.counter',
-            no_contests => 'TEXT';
+        process 'div.right_side > div.bio_graph > span.card', 'others[]' => sub {
+            my $node = $_;
+            my @spans = $node->find('span');
+            my $result_type;
+            my $count;
+            for my $span (@spans) {
+                my $class = $span->attr('class');
+                if ($class eq 'result') {
+                    $result_type = $result_other_types{$span->as_text};
+                }
+                elsif ($class eq 'counter') {
+                    $count = $span->as_text;
+                }
+            }
+            return unless defined $result_type;
+            return +{ $result_type => int($count) };
+        };
         process 'div.fight_history', 'history[]' => sub {
             my $node = $_;
             my $url = $self->_guess_url;
@@ -189,11 +209,16 @@ sub _fixup_data {
     }
 
     my %history = ();
-    for my $history (@{$res->{history}}) {
+    for my $history (@{$res->{history} || []}) {
         my($k, $v) = each %$history;
         $history{$k} = $v;
     }
     $res->{history} = \%history;
+
+    for my $other (@{delete $res->{others} || []}) {
+        my($k, $v) = each %$other;
+        $res->{$k} = $v;
+    }
 
     for my $key (keys %$res) {
         $self->{$key} = $res->{$key};
